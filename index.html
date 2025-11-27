@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Code History Viewer</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="node_modules/highlight.js/styles/github-dark.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <h1>Claude Code History</h1>
+        <div class="session-count" id="sessionCount">Loading...</div>
+      </div>
+      <div class="session-list" id="sessionList">
+        <div class="loading">Loading sessions...</div>
+      </div>
+    </div>
+
+    <!-- Main Chat Area -->
+    <div class="main-panel">
+      <div class="chat-header" id="chatHeader">
+        <div class="empty-state-header">Select a session to view</div>
+      </div>
+      <div class="chat-container" id="chatContainer">
+        <div class="empty-state">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <p>Select a session from the sidebar to view the conversation</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

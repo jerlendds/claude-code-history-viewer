@@ -1,0 +1,205 @@
+const { ipcRenderer } = require('electron');
+const { marked } = require('marked');
+const hljs = require('highlight.js');
+
+let currentSessions = [];
+let currentSessionId = null;
+
+// Configure marked for syntax highlighting
+marked.setOptions({
+  highlight: function(code, lang) {
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        return hljs.highlight(code, { language: lang }).value;
+      } catch (err) {
+        console.error('Highlight error:', err);
+      }
+    }
+    return hljs.highlightAuto(code).value;
+  },
+  breaks: true,
+  gfm: true
+});
+
+// Format timestamp
+function formatTimestamp(timestamp) {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diff = now - date;
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+  if (days === 0) {
+    return 'Today, ' + date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  } else if (days === 1) {
+    return 'Yesterday, ' + date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  } else if (days < 7) {
+    return date.toLocaleDateString('en-US', { weekday: 'long', hour: 'numeric', minute: '2-digit' });
+  } else {
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+}
+
+// Format timestamp for message header
+function formatMessageTimestamp(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+}
+
+// Truncate project path
+function truncateProject(project) {
+  const parts = project.split('/');
+  if (parts.length > 3) {
+    return '.../' + parts.slice(-2).join('/');
+  }
+  return project;
+}
+
+// Load sessions from Claude Code history
+async function loadSessions() {
+  const sessionList = document.getElementById('sessionList');
+  const sessionCount = document.getElementById('sessionCount');
+
+  try {
+    const result = await ipcRenderer.invoke('get-sessions');
+
+    if (result.error) {
+      sessionList.innerHTML = `<div class="error-message">${result.error}</div>`;
+      sessionCount.textContent = 'Error loading sessions';
+      return;
+    }
+
+    currentSessions = result.sessions;
+
+    if (currentSessions.length === 0) {
+      sessionList.innerHTML = '<div class="loading">No sessions found</div>';
+      sessionCount.textContent = '0 sessions';
+      return;
+    }
+
+    sessionCount.textContent = `${currentSessions.length} session${currentSessions.length !== 1 ? 's' : ''}`;
+
+    // Render session list
+    sessionList.innerHTML = currentSessions.map((session, index) => `
+      <div class="session-item" data-session-id="${session.id}" data-project-dir="${session.projectDir}">
+        <div class="session-timestamp">${formatTimestamp(session.timestamp)}</div>
+        <div class="session-preview">${escapeHtml(session.display)}</div>
+        <div class="session-meta">
+          <div class="session-project">${escapeHtml(truncateProject(session.project))}</div>
+          <div class="session-messages">${session.messageCount} msg</div>
+        </div>
+      </div>
+    `).join('');
+
+    // Add click handlers
+    document.querySelectorAll('.session-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const sessionId = item.getAttribute('data-session-id');
+        const projectDir = item.getAttribute('data-project-dir');
+        loadSessionDetails(sessionId, projectDir);
+
+        // Update active state
+        document.querySelectorAll('.session-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+      });
+    });
+
+  } catch (error) {
+    sessionList.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+    sessionCount.textContent = 'Error';
+  }
+}
+
+// Load full session conversation
+async function loadSessionDetails(sessionId, projectDir) {
+  const chatContainer = document.getElementById('chatContainer');
+  const chatHeader = document.getElementById('chatHeader');
+
+  currentSessionId = sessionId;
+
+  // Show loading state
+  chatContainer.innerHTML = '<div class="loading">Loading conversation...</div>';
+
+  try {
+    const result = await ipcRenderer.invoke('get-session-details', sessionId, projectDir);
+
+    if (result.error) {
+      chatContainer.innerHTML = `<div class="error-message">${result.error}</div>`;
+      return;
+    }
+
+    const session = currentSessions.find(s => s.id === sessionId);
+
+    // Update header
+    chatHeader.innerHTML = `
+      <div class="session-header">
+        <div class="session-title">${escapeHtml(session.display)}</div>
+        <div class="session-info">
+          <span>${formatTimestamp(session.timestamp)}</span>
+          <span>•</span>
+          <span>${escapeHtml(session.project)}</span>
+          <span>•</span>
+          <span>${result.messages.length} messages</span>
+        </div>
+      </div>
+    `;
+
+    // Render messages
+    chatContainer.innerHTML = result.messages.map(msg => {
+      let contentHtml = '';
+
+      // Process content with markdown
+      if (msg.content) {
+        contentHtml = marked.parse(msg.content);
+      }
+
+      // Add tool use information if present
+      let toolUsesHtml = '';
+      if (msg.toolUses && msg.toolUses.length > 0) {
+        const toolNames = msg.toolUses.map(tool => tool.name).join(', ');
+        toolUsesHtml = `
+          <div class="tool-uses">
+            <div class="tool-use-title">🔧 Tools used:</div>
+            <div class="tool-use-item">${escapeHtml(toolNames)}</div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="message ${msg.role}">
+          <div class="message-header">
+            <div class="message-role ${msg.role}">${msg.role === 'user' ? 'You' : 'Claude'}</div>
+            <div class="message-timestamp">${formatMessageTimestamp(msg.timestamp)}</div>
+          </div>
+          <div class="message-content">
+            ${contentHtml}
+          </div>
+          ${toolUsesHtml}
+        </div>
+      `;
+    }).join('');
+
+    // Scroll to top
+    chatContainer.scrollTop = 0;
+
+  } catch (error) {
+    chatContainer.innerHTML = `<div class="error-message">Error loading conversation: ${error.message}</div>`;
+  }
+}
+
+// Escape HTML to prevent XSS
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Initialize on load
+window.addEventListener('DOMContentLoaded', () => {
+  loadSessions();
+});
