@@ -51,6 +51,133 @@ function formatMessageTimestamp(timestamp) {
   });
 }
 
+function guessLanguageFromFilePath(filePath) {
+  if (!filePath || typeof filePath !== 'string') return null;
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith('.ts')) return 'typescript';
+  if (lower.endsWith('.tsx')) return 'typescript';
+  if (lower.endsWith('.js')) return 'javascript';
+  if (lower.endsWith('.jsx')) return 'javascript';
+  if (lower.endsWith('.json')) return 'json';
+  if (lower.endsWith('.jsonl')) return 'json';
+  if (lower.endsWith('.css')) return 'css';
+  if (lower.endsWith('.html')) return 'xml';
+  if (lower.endsWith('.md')) return 'markdown';
+  if (lower.endsWith('.yml') || lower.endsWith('.yaml')) return 'yaml';
+  if (lower.endsWith('.sh')) return 'bash';
+  if (lower.endsWith('.py')) return 'python';
+  if (lower.endsWith('.go')) return 'go';
+  if (lower.endsWith('.rs')) return 'rust';
+  if (lower.endsWith('.java')) return 'java';
+  if (lower.endsWith('.c')) return 'c';
+  if (lower.endsWith('.cpp') || lower.endsWith('.cc') || lower.endsWith('.cxx')) return 'cpp';
+  return null;
+}
+
+function renderFileHistorySnapshots(msg) {
+  if (!msg.fileHistorySnapshots || msg.fileHistorySnapshots.length === 0) return '';
+
+  const snapshots = msg.fileHistorySnapshots.filter(s => {
+    const backups = s && s.trackedFileBackups ? Object.keys(s.trackedFileBackups) : [];
+    return backups.length > 0;
+  });
+  if (snapshots.length === 0) return '';
+
+  const uniqueFiles = new Set();
+  for (const snapshot of snapshots) {
+    for (const filePath of Object.keys(snapshot.trackedFileBackups || {})) {
+      uniqueFiles.add(filePath);
+    }
+  }
+  const fileCount = uniqueFiles.size;
+
+  const snapshotsHtml = snapshots.map(snapshot => {
+    const entries = Object.entries(snapshot.trackedFileBackups || {}).sort((a, b) => a[0].localeCompare(b[0]));
+    const snapshotTime = snapshot.timestamp || msg.timestamp;
+
+    return `
+      <div class="file-history-snapshot">
+        <div class="file-history-snapshot-header">
+          <div class="file-history-snapshot-title">Snapshot</div>
+          <div class="file-history-snapshot-time">${formatMessageTimestamp(snapshotTime)}</div>
+        </div>
+        <div class="file-history-files">
+          ${entries.map(([filePath, meta]) => `
+            <details class="file-snapshot" data-backup-file="${escapeHtml(meta.backupFileName)}" data-file-path="${escapeHtml(filePath)}">
+              <summary class="file-snapshot-summary">
+                <span class="file-snapshot-path">${escapeHtml(filePath)}</span>
+                <span class="file-snapshot-version">v${meta.version}</span>
+              </summary>
+              <div class="file-snapshot-meta">${meta.backupTime ? escapeHtml(new Date(meta.backupTime).toLocaleString()) : ''}</div>
+              <div class="file-snapshot-warning" hidden></div>
+              <pre class="file-snapshot-pre"><code class="hljs"></code></pre>
+            </details>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <details class="file-history">
+      <summary class="file-history-summary">📁 File history (${fileCount} file${fileCount !== 1 ? 's' : ''})</summary>
+      ${snapshotsHtml}
+    </details>
+  `;
+}
+
+function attachFileHistoryHandlers(container) {
+  container.querySelectorAll('.file-snapshot').forEach(details => {
+    details.addEventListener('toggle', async () => {
+      if (!details.open) return;
+      if (details.dataset.loaded === 'true' || details.dataset.loaded === 'loading') return;
+
+      const backupFileName = details.getAttribute('data-backup-file');
+      const filePath = details.getAttribute('data-file-path');
+      const codeEl = details.querySelector('code');
+      const warningEl = details.querySelector('.file-snapshot-warning');
+
+      details.dataset.loaded = 'loading';
+      if (codeEl) codeEl.textContent = 'Loading…';
+      if (warningEl) warningEl.hidden = true;
+
+      try {
+        const result = await ipcRenderer.invoke('get-file-history-file', currentSessionId, backupFileName);
+        if (result.error) {
+          if (codeEl) codeEl.textContent = result.error;
+          details.dataset.loaded = 'true';
+          return;
+        }
+
+        const content = result.content || '';
+        const language = guessLanguageFromFilePath(filePath);
+
+        if (warningEl && result.truncated) {
+          warningEl.hidden = false;
+          warningEl.textContent = `Showing first 2 MiB (file is ${Math.round(result.originalBytes / 1024)} KiB)`;
+        }
+
+        if (!codeEl) return;
+
+        try {
+          if (language && hljs.getLanguage(language)) {
+            codeEl.innerHTML = hljs.highlight(content, { language }).value;
+          } else {
+            codeEl.innerHTML = hljs.highlightAuto(content).value;
+          }
+        } catch (e) {
+          codeEl.textContent = content;
+        }
+
+        details.dataset.loaded = 'true';
+      } catch (e) {
+        if (codeEl) codeEl.textContent = `Error loading snapshot: ${e.message}`;
+        details.dataset.loaded = 'true';
+      }
+    });
+  });
+}
+
 // Truncate project path
 function truncateProject(project) {
   const parts = project.split('/');
@@ -158,6 +285,10 @@ async function loadSessionDetails(sessionId, projectDir) {
         contentHtml = marked.parse(msg.content);
       }
 
+      const contentSection = contentHtml
+        ? `<div class="message-content">${contentHtml}</div>`
+        : '';
+
       // Add tool use information if present
       let toolUsesHtml = '';
       if (msg.toolUses && msg.toolUses.length > 0) {
@@ -170,19 +301,22 @@ async function loadSessionDetails(sessionId, projectDir) {
         `;
       }
 
+      const fileHistoryHtml = renderFileHistorySnapshots(msg);
+
       return `
         <div class="message ${msg.role}">
           <div class="message-header">
             <div class="message-role ${msg.role}">${msg.role === 'user' ? 'You' : 'Claude'}</div>
             <div class="message-timestamp">${formatMessageTimestamp(msg.timestamp)}</div>
           </div>
-          <div class="message-content">
-            ${contentHtml}
-          </div>
+          ${contentSection}
           ${toolUsesHtml}
+          ${fileHistoryHtml}
         </div>
       `;
     }).join('');
+
+    attachFileHistoryHandlers(chatContainer);
 
     // Scroll to top
     chatContainer.scrollTop = 0;

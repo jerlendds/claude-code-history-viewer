@@ -401,3 +401,127 @@ body {
   padding: 4px 0;
   font-family: 'Monaco', 'Menlo', monospace;
 }
+
+/* File History */
+.file-history {
+  margin-top: 12px;
+  background: #1f1f1f;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.file-history-summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #a0a0a0;
+  user-select: none;
+}
+
+.file-history-summary::-webkit-details-marker {
+  display: none;
+}
+
+.file-history[open] .file-history-summary {
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.file-history-snapshot {
+  padding: 12px;
+}
+
+.file-history-snapshot + .file-history-snapshot {
+  border-top: 1px solid #2a2a2a;
+}
+
+.file-history-snapshot-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 10px;
+}
+
+.file-history-snapshot-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #c77dff;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.file-history-snapshot-time {
+  font-size: 11px;
+  color: #666;
+}
+
+.file-history-files {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.file-snapshot {
+  background: #181818;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.file-snapshot-summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  user-select: none;
+}
+
+.file-snapshot-summary::-webkit-details-marker {
+  display: none;
+}
+
+.file-snapshot-path {
+  font-size: 12px;
+  color: #b0b0b0;
+  font-family: 'Monaco', 'Menlo', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.file-snapshot-version {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: 'Monaco', 'Menlo', monospace;
+  color: #f59e0b;
+  background: #242424;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #2a2a2a;
+}
+
+.file-snapshot-meta {
+  padding: 0 12px 10px 12px;
+  font-size: 11px;
+  color: #666;
+}
+
+.file-snapshot-warning {
+  padding: 0 12px 10px 12px;
+  font-size: 11px;
+  color: #f59e0b;
+}
+
+.file-snapshot-pre {
+  margin: 0;
+  padding: 12px;
+  background: #0d1117;
+  border-top: 1px solid #2a2a2a;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.45;
+}

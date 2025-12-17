@@ -14,6 +14,7 @@ An Electron desktop app that displays your Claude Code session history in a clea
 - **💬 Full Conversations**: View complete conversation history with proper formatting
 - **🎨 Syntax Highlighting**: Code blocks are automatically highlighted with language detection
 - **🔧 Tool Usage Display**: See which tools Claude used during each conversation
+- **📁 File History Snapshots**: Expand messages to view `.claude/file-history` snapshots captured during the session
 - **🌙 Dark Theme**: Modern, dark-themed interface inspired by the Claude desktop app
 - **⚡ Fast & Lightweight**: No heavy frameworks, just vanilla JavaScript
 - **🔒 Privacy First**: All data stays local on your machine
@@ -55,11 +56,13 @@ Click any session in the sidebar to view the full conversation.
 The app reads session data directly from your local Claude Code storage:
 
 1. **`~/.claude/projects/`** - Full session transcripts organized by project
-2. Each session file is parsed to extract:
+2. **`~/.claude/file-history/`** - File snapshots referenced by `file-history-snapshot` events in the session transcript
+3. Each session file is parsed to extract:
    - User messages
    - Claude responses
    - Tool usage information
    - Timestamps
+   - File history snapshot metadata (and on-demand snapshot file contents)
 
 Sessions are displayed with:
 - Smart timestamp formatting ("Today", "Yesterday", or full date)

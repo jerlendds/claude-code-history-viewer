@@ -13,6 +13,29 @@ function getClaudeConfigPath() {
   }
 }
 
+function safeJsonParse(line) {
+  try {
+    return JSON.parse(line);
+  } catch (e) {
+    return null;
+  }
+}
+
+function extractTextContent(message) {
+  if (!message) return '';
+
+  if (typeof message.content === 'string') return message.content;
+
+  if (Array.isArray(message.content)) {
+    return message.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('\n\n');
+  }
+
+  return '';
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1400,
@@ -61,11 +84,7 @@ ipcMain.handle('get-sessions', async () => {
 
     // Parse history entries
     const historyEntries = historyLines.map(line => {
-      try {
-        return JSON.parse(line);
-      } catch (e) {
-        return null;
-      }
+      return safeJsonParse(line);
     }).filter(entry => entry !== null);
 
     // Group by project and timestamp to identify sessions
@@ -92,11 +111,7 @@ ipcMain.handle('get-sessions', async () => {
 
               if (lines.length > 0) {
                 const messages = lines.map(line => {
-                  try {
-                    return JSON.parse(line);
-                  } catch (e) {
-                    return null;
-                  }
+                  return safeJsonParse(line);
                 }).filter(msg => msg !== null);
 
                 // Find first user message
@@ -105,16 +120,7 @@ ipcMain.handle('get-sessions', async () => {
                 if (firstUserMessage) {
                   const projectName = projectDir.replace(/-/g, '/').substring(1); // Remove leading dash and convert dashes to slashes
 
-                  // Extract content - it might be a string or an array
-                  let content = '';
-                  if (typeof firstUserMessage.message.content === 'string') {
-                    content = firstUserMessage.message.content;
-                  } else if (Array.isArray(firstUserMessage.message.content)) {
-                    content = firstUserMessage.message.content
-                      .filter(block => block.type === 'text')
-                      .map(block => block.text)
-                      .join(' ');
-                  }
+                  const content = extractTextContent(firstUserMessage.message);
 
                   sessionMap.set(sessionId, {
                     id: sessionId,
@@ -156,59 +162,117 @@ ipcMain.handle('get-session-details', async (event, sessionId, projectDir) => {
     const sessionContent = fs.readFileSync(sessionPath, 'utf-8');
     const lines = sessionContent.trim().split('\n').filter(line => line.trim());
 
-    const messages = lines.map(line => {
-      try {
-        return JSON.parse(line);
-      } catch (e) {
-        return null;
+    const messages = lines.map(line => safeJsonParse(line)).filter(msg => msg !== null);
+
+    // Index file-history snapshots by the message UUID they relate to (messageId).
+    const fileHistorySnapshotsByMessageId = new Map();
+    for (const msg of messages) {
+      if (msg && msg.type === 'file-history-snapshot' && msg.messageId && msg.snapshot) {
+        const snapshot = {
+          messageId: msg.messageId,
+          timestamp: msg.snapshot.timestamp,
+          isSnapshotUpdate: !!msg.isSnapshotUpdate,
+          trackedFileBackups: msg.snapshot.trackedFileBackups || {}
+        };
+        const existing = fileHistorySnapshotsByMessageId.get(msg.messageId) || [];
+        existing.push(snapshot);
+        fileHistorySnapshotsByMessageId.set(msg.messageId, existing);
       }
-    }).filter(msg => msg !== null);
+    }
 
     // Filter and format messages for display
     const formattedMessages = messages
       .filter(msg => (msg.type === 'user' || msg.type === 'assistant') && msg.message)
       .map(msg => {
         if (msg.type === 'user') {
-          // Extract content - it might be a string or an array
-          let content = '';
-          if (typeof msg.message.content === 'string') {
-            content = msg.message.content;
-          } else if (Array.isArray(msg.message.content)) {
-            content = msg.message.content
-              .filter(block => block.type === 'text')
-              .map(block => block.text)
-              .join('\n\n');
-          }
+          const content = extractTextContent(msg.message);
 
           return {
             role: 'user',
             content: content,
-            timestamp: msg.timestamp
+            timestamp: msg.timestamp,
+            uuid: msg.uuid,
+            fileHistorySnapshots: fileHistorySnapshotsByMessageId.get(msg.uuid) || []
           };
         } else if (msg.type === 'assistant') {
-          // Extract text content from assistant messages
-          let content = '';
-          if (Array.isArray(msg.message.content)) {
-            content = msg.message.content
-              .filter(block => block.type === 'text')
-              .map(block => block.text)
-              .join('\n\n');
-          } else if (typeof msg.message.content === 'string') {
-            content = msg.message.content;
-          }
+          const content = extractTextContent(msg.message);
 
           return {
             role: 'assistant',
             content: content,
             timestamp: msg.timestamp,
-            toolUses: msg.message.content?.filter(block => block.type === 'tool_use') || []
+            uuid: msg.uuid,
+            toolUses: msg.message.content?.filter(block => block.type === 'tool_use') || [],
+            fileHistorySnapshots: fileHistorySnapshotsByMessageId.get(msg.uuid) || []
           };
         }
         return null;
       })
-      .filter(msg => msg !== null && msg.content);
+      .filter(msg => {
+        if (!msg) return false;
+        if (msg.content && msg.content.trim()) return true;
+        if (msg.toolUses && msg.toolUses.length > 0) return true;
+        if (msg.fileHistorySnapshots && msg.fileHistorySnapshots.length > 0) return true;
+        return false;
+      });
 
     return { messages: formattedMessages };
+  } catch (error) {
+    return { error: error.message };
+  }
+});
+
+ipcMain.handle('get-file-history-file', async (event, sessionId, backupFileName) => {
+  try {
+    const configPath = getClaudeConfigPath();
+    const baseDir = path.join(configPath, 'file-history');
+
+    if (
+      typeof sessionId !== 'string' ||
+      typeof backupFileName !== 'string' ||
+      sessionId.includes('/') ||
+      sessionId.includes('\\') ||
+      backupFileName.includes('/') ||
+      backupFileName.includes('\\') ||
+      sessionId.includes('..') ||
+      backupFileName.includes('..')
+    ) {
+      return { error: 'Invalid file-history request' };
+    }
+
+    const resolvedBase = path.resolve(baseDir);
+    const resolvedPath = path.resolve(baseDir, sessionId, backupFileName);
+    if (!resolvedPath.startsWith(resolvedBase + path.sep)) {
+      return { error: 'Invalid file-history path' };
+    }
+
+    if (!fs.existsSync(resolvedPath)) {
+      return { error: 'Snapshot file not found' };
+    }
+
+    const stat = fs.statSync(resolvedPath);
+    if (!stat.isFile()) {
+      return { error: 'Snapshot path is not a file' };
+    }
+
+    // Avoid locking the renderer with extremely large files.
+    const maxBytes = 2 * 1024 * 1024; // 2 MiB
+    if (stat.size > maxBytes) {
+      const fd = fs.openSync(resolvedPath, 'r');
+      try {
+        const buffer = Buffer.allocUnsafe(maxBytes);
+        const bytesRead = fs.readSync(fd, buffer, 0, maxBytes, 0);
+        return {
+          content: buffer.slice(0, bytesRead).toString('utf-8'),
+          truncated: true,
+          originalBytes: stat.size
+        };
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+
+    return { content: fs.readFileSync(resolvedPath, 'utf-8') };
   } catch (error) {
     return { error: error.message };
   }
